@@ -31,6 +31,21 @@ def test_generate_csv_adds_column_description() -> None:
     assert "column_description" in header
 
 
+def test_generate_csv_compare_returns_two_outputs_and_winner() -> None:
+    csv_content = "table_name,column_name\ncustomer_account,acct_open_dt\n"
+    response = client.post(
+        "/v1/descriptions/generate-csv-compare",
+        files={"file": ("columns.csv", csv_content.encode("utf-8"), "text/csv")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "model_a" in data and "model_b" in data and "comparison" in data
+    assert "column_description" in data["model_a"]["csv"]
+    assert "column_description" in data["model_b"]["csv"]
+    winner = data["comparison"]["winner_model"]
+    assert winner in {data["model_a"]["model"], data["model_b"]["model"]}
+
+
 def test_generate_validate_review_flow() -> None:
     samples_res = client.get("/v1/demo/samples")
     assert samples_res.status_code == 200

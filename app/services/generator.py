@@ -9,6 +9,7 @@ from app import models
 from app.config import (
     MAX_SAMPLE_VALUES,
     OLLAMA_BASE_URL,
+    OLLAMA_COMPARE_MODEL,
     OLLAMA_MODEL,
     OPENAI_API_KEY,
     OPENAI_MODEL,
@@ -44,6 +45,7 @@ class DescriptionGenerator:
         self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY and OpenAI else None
         self.ollama_base_url = OLLAMA_BASE_URL
         self.ollama_model = OLLAMA_MODEL
+        self.ollama_compare_model = OLLAMA_COMPARE_MODEL
 
     def generate(self, request: models.GenerateRequest) -> GeneratorResult:
         table_description = self._generate_table_description(request)
@@ -64,12 +66,19 @@ class DescriptionGenerator:
         self, rows: list[tuple[str, str]]
     ) -> CSVGenerationResult:
         """Generate only column_description for each (table_name, column_name) pair."""
+        return self.generate_column_descriptions_for_rows_with_model(rows, self.ollama_model)
+
+    def generate_column_descriptions_for_rows_with_model(
+        self, rows: list[tuple[str, str]], model: str
+    ) -> CSVGenerationResult:
+        target_model = (model or "").strip() or self.ollama_model
+
         if PREFER_LOCAL_LLM:
-            ollama_descriptions = self._generate_column_descriptions_with_ollama(rows)
+            ollama_descriptions = self._generate_column_descriptions_with_ollama(rows, target_model)
             if ollama_descriptions is not None and len(ollama_descriptions) == len(rows):
                 return CSVGenerationResult(
                     descriptions=ollama_descriptions,
-                    model_version=self.ollama_model,
+                    model_version=target_model,
                     provider="ollama",
                     used_llm=True,
                 )
@@ -119,7 +128,7 @@ class DescriptionGenerator:
             return None
 
     def _generate_column_descriptions_with_ollama(
-        self, rows: list[tuple[str, str]]
+        self, rows: list[tuple[str, str]], model: str
     ) -> list[str] | None:
         if not rows:
             return None
@@ -140,7 +149,7 @@ class DescriptionGenerator:
                 response = client.post(
                     f"{self.ollama_base_url}/api/chat",
                     json={
-                        "model": self.ollama_model,
+                        "model": model,
                         "messages": [
                             {"role": "system", "content": system},
                             {"role": "user", "content": prompt},

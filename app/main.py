@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import csv
 import io
+from statistics import mean
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from app import models
-from app.config import OLLAMA_MODEL, OPENAI_MODEL, PREFER_LOCAL_LLM
+from app.config import OLLAMA_COMPARE_MODEL, OLLAMA_MODEL, OPENAI_MODEL, PREFER_LOCAL_LLM
 from app.services.domain import BankingDomainKnowledge
 from app.services.generator import DescriptionGenerator
 from app.services.review import ReviewStore
@@ -22,10 +23,110 @@ validator = DescriptionValidator()
 review_store = ReviewStore()
 demo_samples = DemoSamples()
 
+BANKING_KEYWORDS = {
+    "account",
+    "transaction",
+    "compliance",
+    "kyc",
+    "aml",
+    "customer",
+    "loan",
+    "interest",
+    "apr",
+    "balance",
+    "payment",
+    "risk",
+}
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _parse_uploaded_csv(file: UploadFile) -> tuple[list[str], list[dict], list[tuple[str, str]]]:
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a CSV file")
+
+    content = file.file.read().decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(content))
+    rows_list = list(reader)
+    if not rows_list:
+        raise HTTPException(status_code=400, detail="CSV has no data rows")
+
+    fieldnames = reader.fieldnames or []
+    if "table_name" not in fieldnames or "column_name" not in fieldnames:
+        raise HTTPException(status_code=400, detail="CSV must have headers: table_name, column_name")
+
+    row_tuples = [
+        (row["table_name"].strip(), row["column_name"].strip())
+        for row in rows_list
+    ]
+    return fieldnames, rows_list, row_tuples
+
+
+def _build_output_csv(fieldnames: list[str], rows_list: list[dict], descriptions: list[str]) -> str:
+    out_headers = [f for f in fieldnames if f != "column_description"] + ["column_description"]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=out_headers, extrasaction="ignore")
+    writer.writeheader()
+    for row, col_desc in zip(rows_list, descriptions, strict=True):
+        row_copy = dict(row)
+        row_copy["column_description"] = col_desc
+        writer.writerow(row_copy)
+    output.seek(0)
+    return output.getvalue()
+
+
+def _score_descriptions(descriptions: list[str]) -> dict:
+    if not descriptions:
+        return {"score": 0.0, "specificity": 0.0, "banking_relevance": 0.0, "generic_penalty": 1.0}
+
+    def has_banking_terms(text: str) -> float:
+        low = text.lower()
+        return 1.0 if any(k in low for k in BANKING_KEYWORDS) else 0.0
+
+    def specificity(text: str) -> float:
+        words = max(1, len(text.split()))
+        return min(words / 18.0, 1.0)
+
+    def is_generic(text: str) -> float:
+        low = text.lower()
+        generic_markers = [
+            " in `",
+            "used in analytics",
+            "used for analytics",
+            "field in",
+            "column in",
+        ]
+        return 1.0 if any(g in low for g in generic_markers) else 0.0
+
+    specificity_score = mean(specificity(d) for d in descriptions)
+    banking_relevance = mean(has_banking_terms(d) for d in descriptions)
+    generic_penalty = mean(is_generic(d) for d in descriptions)
+    total = ((0.45 * banking_relevance) + (0.45 * specificity_score) + (0.10 * (1.0 - generic_penalty))) * 100.0
+    return {
+        "score": round(total, 2),
+        "specificity": round(specificity_score, 3),
+        "banking_relevance": round(banking_relevance, 3),
+        "generic_penalty": round(generic_penalty, 3),
+    }
+
+
+def _compare_models(model_a: str, model_b: str, descriptions_a: list[str], descriptions_b: list[str]) -> dict:
+    metrics_a = _score_descriptions(descriptions_a)
+    metrics_b = _score_descriptions(descriptions_b)
+    winner = model_a if metrics_a["score"] >= metrics_b["score"] else model_b
+    if winner == model_a:
+        reason = f"{model_a} has stronger banking relevance/specificity score ({metrics_a['score']} vs {metrics_b['score']})."
+    else:
+        reason = f"{model_b} has stronger banking relevance/specificity score ({metrics_b['score']} vs {metrics_a['score']})."
+    return {
+        "winner_model": winner,
+        "reason": reason,
+        "model_a_metrics": metrics_a,
+        "model_b_metrics": metrics_b,
+    }
 
 
 @app.post("/v1/descriptions/generate", response_model=models.GenerateResponse)
@@ -46,37 +147,14 @@ def generate_descriptions(request: models.GenerateRequest) -> models.GenerateRes
 @app.post("/v1/descriptions/generate-csv")
 def generate_descriptions_csv(file: UploadFile = File(...)) -> StreamingResponse:
     """Accept a CSV with table_name and column_name; return same CSV with column_description added."""
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Upload a CSV file")
-    content = file.file.read().decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(content))
-    rows_list = list(reader)
-    if not rows_list:
-        raise HTTPException(status_code=400, detail="CSV has no data rows")
-    fieldnames = reader.fieldnames or []
-    if "table_name" not in fieldnames or "column_name" not in fieldnames:
-        raise HTTPException(
-            status_code=400,
-            detail="CSV must have headers: table_name, column_name",
-        )
-    row_tuples = [
-        (row["table_name"].strip(), row["column_name"].strip())
-        for row in rows_list
-    ]
+    fieldnames, rows_list, row_tuples = _parse_uploaded_csv(file)
     try:
         generation = generator.generate_column_descriptions_for_rows(row_tuples)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    out_headers = [f for f in fieldnames if f != "column_description"] + ["column_description"]
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=out_headers, extrasaction="ignore")
-    writer.writeheader()
-    for row, col_desc in zip(rows_list, generation.descriptions, strict=True):
-        row["column_description"] = col_desc
-        writer.writerow(row)
-    output.seek(0)
+    csv_output = _build_output_csv(fieldnames, rows_list, generation.descriptions)
     return StreamingResponse(
-        iter([output.getvalue()]),
+        iter([csv_output]),
         media_type="text/csv",
         headers={
             "Content-Disposition": "attachment; filename=descriptions.csv",
@@ -85,6 +163,42 @@ def generate_descriptions_csv(file: UploadFile = File(...)) -> StreamingResponse
             "X-LLM-Used": "true" if generation.used_llm else "false",
         },
     )
+
+
+@app.post("/v1/descriptions/generate-csv-compare")
+def generate_descriptions_csv_compare(file: UploadFile = File(...)) -> dict:
+    """Generate two CSV outputs from two models and return a quality comparison."""
+    fieldnames, rows_list, row_tuples = _parse_uploaded_csv(file)
+
+    generation_a = generator.generate_column_descriptions_for_rows_with_model(row_tuples, OLLAMA_MODEL)
+    generation_b = generator.generate_column_descriptions_for_rows_with_model(row_tuples, OLLAMA_COMPARE_MODEL)
+
+    csv_a = _build_output_csv(fieldnames, rows_list, generation_a.descriptions)
+    csv_b = _build_output_csv(fieldnames, rows_list, generation_b.descriptions)
+    comparison = _compare_models(
+        generation_a.model_version,
+        generation_b.model_version,
+        generation_a.descriptions,
+        generation_b.descriptions,
+    )
+
+    return {
+        "model_a": {
+            "provider": generation_a.provider,
+            "model": generation_a.model_version,
+            "used_llm": generation_a.used_llm,
+            "filename": f"descriptions_{generation_a.model_version.replace(':', '_')}.csv",
+            "csv": csv_a,
+        },
+        "model_b": {
+            "provider": generation_b.provider,
+            "model": generation_b.model_version,
+            "used_llm": generation_b.used_llm,
+            "filename": f"descriptions_{generation_b.model_version.replace(':', '_')}.csv",
+            "csv": csv_b,
+        },
+        "comparison": comparison,
+    }
 
 
 @app.post("/v1/descriptions/validate", response_model=models.ValidateResponse)
@@ -161,9 +275,9 @@ def get_demo_sample(name: str | None = None) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def demo_ui() -> str:
     configured = (
-        f"Configured LLM: local Ollama (<code>{OLLAMA_MODEL}</code>) then OpenAI (<code>{OPENAI_MODEL}</code>) fallback"
+        f"Model A: <code>{OLLAMA_MODEL}</code> | Model B: <code>{OLLAMA_COMPARE_MODEL}</code> (local Ollama, then OpenAI <code>{OPENAI_MODEL}</code> fallback)"
         if PREFER_LOCAL_LLM
-        else f"Configured LLM: OpenAI (<code>{OPENAI_MODEL}</code>) then local Ollama (<code>{OLLAMA_MODEL}</code>) fallback"
+        else f"Model A: <code>{OLLAMA_MODEL}</code> | Model B: <code>{OLLAMA_COMPARE_MODEL}</code> (OpenAI <code>{OPENAI_MODEL}</code> preferred)"
     )
     html = """
 <!doctype html>
@@ -253,32 +367,47 @@ def demo_ui() -> str:
 </head>
 <body>
   <div class="card">
-    <h1>CSV Description Generator</h1>
-    <p>Upload one CSV with headers <code>table_name</code> and <code>column_name</code>. The system will process it and produce a downloadable CSV with <code>column_description</code>.</p>
-    <p class="tip">No other setup is required on this page.</p>
-    <div id="llmConfigured" class="meta">__CONFIGURED_LLM__</div>
+    <h1>Two-Model CSV Comparison</h1>
+    <p>Upload one CSV (<code>table_name</code>, <code>column_name</code>). The app will generate two output CSV files from two LLMs, compare quality, and recommend the better one.</p>
+    <p class="tip">Single action: upload, process, compare, download both files.</p>
+    <div id="llmConfigured" class="meta"><strong>Configured Models:</strong> __CONFIGURED_LLM__</div>
     <input type="file" id="csvFile" accept=".csv" />
     <div class="actions">
-      <button id="processBtn" onclick="runGenerateCsv()">Process CSV</button>
-      <a id="downloadLink" class="btn hide" download="descriptions.csv">Download CSV</a>
+      <button id="processBtn" onclick="runCompareCsv()">Process & Compare</button>
+      <a id="downloadLinkA" class="btn hide" download="descriptions_model_a.csv">Download CSV (Model A)</a>
+      <a id="downloadLinkB" class="btn hide" download="descriptions_model_b.csv">Download CSV (Model B)</a>
     </div>
     <div id="status" class="status"></div>
     <div id="llmInfo" class="meta">Last run: not processed yet</div>
-    <div class="preview-wrap hide" id="previewWrap">
+    <div id="comparisonInfo" class="meta hide"></div>
+    <div class="preview-wrap hide" id="previewWrapA">
+      <p><strong>Model A Output Preview</strong></p>
       <table>
-        <thead id="previewHead"></thead>
-        <tbody id="previewBody"></tbody>
+        <thead id="previewHeadA"></thead>
+        <tbody id="previewBodyA"></tbody>
+      </table>
+    </div>
+    <div class="preview-wrap hide" id="previewWrapB">
+      <p><strong>Model B Output Preview</strong></p>
+      <table>
+        <thead id="previewHeadB"></thead>
+        <tbody id="previewBodyB"></tbody>
       </table>
     </div>
   </div>
   <script>
     const statusEl = document.getElementById("status");
     const processBtn = document.getElementById("processBtn");
-    const downloadLink = document.getElementById("downloadLink");
+    const downloadLinkA = document.getElementById("downloadLinkA");
+    const downloadLinkB = document.getElementById("downloadLinkB");
     const llmInfo = document.getElementById("llmInfo");
-    const previewWrap = document.getElementById("previewWrap");
-    const previewHead = document.getElementById("previewHead");
-    const previewBody = document.getElementById("previewBody");
+    const comparisonInfo = document.getElementById("comparisonInfo");
+    const previewWrapA = document.getElementById("previewWrapA");
+    const previewHeadA = document.getElementById("previewHeadA");
+    const previewBodyA = document.getElementById("previewBodyA");
+    const previewWrapB = document.getElementById("previewWrapB");
+    const previewHeadB = document.getElementById("previewHeadB");
+    const previewBodyB = document.getElementById("previewBodyB");
 
     function setStatus(text, type){
       statusEl.textContent = text;
@@ -327,18 +456,18 @@ def demo_ui() -> str:
       return {headers: rows[0], rows: rows.slice(1)};
     }
 
-    function renderPreview(csvText){
+    function renderPreview(csvText, headEl, bodyEl, wrapEl){
       const parsed = parseCsv(csvText);
-      previewHead.innerHTML = "";
-      previewBody.innerHTML = "";
-      if(!parsed.headers.length){ previewWrap.classList.add("hide"); return; }
+      headEl.innerHTML = "";
+      bodyEl.innerHTML = "";
+      if(!parsed.headers.length){ wrapEl.classList.add("hide"); return; }
       const headRow = document.createElement("tr");
       parsed.headers.forEach((h) => {
         const th = document.createElement("th");
         th.textContent = h;
         headRow.appendChild(th);
       });
-      previewHead.appendChild(headRow);
+      headEl.appendChild(headRow);
       parsed.rows.slice(0, 12).forEach((r) => {
         const tr = document.createElement("tr");
         parsed.headers.forEach((_, i) => {
@@ -346,24 +475,27 @@ def demo_ui() -> str:
           td.textContent = r[i] || "";
           tr.appendChild(td);
         });
-        previewBody.appendChild(tr);
+        bodyEl.appendChild(tr);
       });
-      previewWrap.classList.remove("hide");
+      wrapEl.classList.remove("hide");
     }
 
-    async function runGenerateCsv(){
+    async function runCompareCsv(){
       const input = document.getElementById("csvFile");
       if(!input.files || !input.files[0]){
         setStatus("Please select a CSV file first.", "err");
         return;
       }
       processBtn.disabled = true;
-      setStatus("Processing your file...", "");
-      downloadLink.classList.add("hide");
-      previewWrap.classList.add("hide");
+      setStatus("Generating descriptions with both models...", "");
+      downloadLinkA.classList.add("hide");
+      downloadLinkB.classList.add("hide");
+      comparisonInfo.classList.add("hide");
+      previewWrapA.classList.add("hide");
+      previewWrapB.classList.add("hide");
       const form = new FormData();
       form.append("file", input.files[0]);
-      const res = await fetch("/v1/descriptions/generate-csv", { method: "POST", body: form });
+      const res = await fetch("/v1/descriptions/generate-csv-compare", { method: "POST", body: form });
       const text = await res.text();
       if(!res.ok){
         setStatus("Processing failed. Please confirm CSV headers: table_name,column_name", "err");
@@ -376,15 +508,30 @@ def demo_ui() -> str:
         processBtn.disabled = false;
         return;
       }
-      const provider = res.headers.get("x-llm-provider") || "unknown";
-      const model = res.headers.get("x-llm-model") || "unknown";
-      const usedLlm = res.headers.get("x-llm-used") || "false";
-      setStatus("Done. Your file is ready to download.", "ok");
-      llmInfo.textContent = "Generator: " + provider + " | Model: " + model + " | LLM used: " + usedLlm;
-      renderPreview(text);
-      const blob = new Blob([text], { type: "text/csv" });
-      downloadLink.href = URL.createObjectURL(blob);
-      downloadLink.classList.remove("hide");
+      const data = JSON.parse(text);
+      const a = data.model_a;
+      const b = data.model_b;
+      const c = data.comparison;
+      setStatus("Done. Two files generated and compared.", "ok");
+      llmInfo.textContent = "Model A: " + a.provider + " / " + a.model + " (LLM used: " + a.used_llm + ") | Model B: " + b.provider + " / " + b.model + " (LLM used: " + b.used_llm + ")";
+      comparisonInfo.classList.remove("hide");
+      comparisonInfo.textContent =
+        "Winner: " + c.winner_model +
+        " | Score A: " + c.model_a_metrics.score +
+        " | Score B: " + c.model_b_metrics.score +
+        " | " + c.reason;
+
+      renderPreview(a.csv, previewHeadA, previewBodyA, previewWrapA);
+      renderPreview(b.csv, previewHeadB, previewBodyB, previewWrapB);
+
+      const blobA = new Blob([a.csv], { type: "text/csv" });
+      const blobB = new Blob([b.csv], { type: "text/csv" });
+      downloadLinkA.href = URL.createObjectURL(blobA);
+      downloadLinkA.download = a.filename || "descriptions_model_a.csv";
+      downloadLinkA.classList.remove("hide");
+      downloadLinkB.href = URL.createObjectURL(blobB);
+      downloadLinkB.download = b.filename || "descriptions_model_b.csv";
+      downloadLinkB.classList.remove("hide");
       processBtn.disabled = false;
     }
   </script>

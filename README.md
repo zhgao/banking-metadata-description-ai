@@ -9,6 +9,8 @@ FastAPI service that generates business descriptions for banking table/column me
     - `X-LLM-Provider`
     - `X-LLM-Model`
     - `X-LLM-Used` (`true`/`false`)
+- **Two-model compare flow:**
+  - `POST /v1/descriptions/generate-csv-compare` - returns 2 CSV outputs (Model A + Model B) and quality comparison metrics/winner.
 - `POST /v1/descriptions/generate` (JSON, optional)
   - Generates table + column descriptions with LLM when available, otherwise falls back to rules.
 - `POST /v1/descriptions/validate`
@@ -25,7 +27,7 @@ FastAPI service that generates business descriptions for banking table/column me
 - `GET /v1/demo/sample?name=customer_account`
   - Load a sample payload in one click.
 - `GET /`
-  - Minimal browser UI: upload CSV -> process -> preview generated descriptions -> download CSV.
+  - Browser UI for two-model compare: upload CSV -> process -> compare -> download both CSV files.
 
 ## Project Structure
 - `app/main.py` - FastAPI routes
@@ -57,7 +59,7 @@ Open demo UI:
 open http://127.0.0.1:8000/
 ```
 
-Upload a CSV with headers `table_name` and `column_name` (e.g. `data/sample_columns.csv`), click **Process CSV**, then download the result CSV with `column_description` added.
+Upload a CSV with headers `table_name` and `column_name` (e.g. `data/sample_columns.csv`), click **Process & Compare**, then download both model outputs.
 
 ## Example API Calls
 **CSV (add column descriptions):**
@@ -110,6 +112,7 @@ export OPENAI_API_KEY="your_key"
 export OPENAI_MODEL="gpt-4o-mini"
 export OLLAMA_BASE_URL="http://127.0.0.1:11434"
 export OLLAMA_MODEL="qwen2.5:14b"
+export OLLAMA_COMPARE_MODEL="qwen3-coder:30b"
 export PREFER_LOCAL_LLM="true"
 ```
 Generation order for CSV endpoint:
