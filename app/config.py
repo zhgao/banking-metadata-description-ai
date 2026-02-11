@@ -19,5 +19,8 @@ DEMO_SAMPLES_PATH = DATA_DIR / "demo_samples.json"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
+PREFER_LOCAL_LLM = os.getenv("PREFER_LOCAL_LLM", "true").lower() in {"1", "true", "yes", "on"}
 MAX_SAMPLE_VALUES = int(os.getenv("MAX_SAMPLE_VALUES", "5"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.75"))

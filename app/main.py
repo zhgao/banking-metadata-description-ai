@@ -63,21 +63,26 @@ def generate_descriptions_csv(file: UploadFile = File(...)) -> StreamingResponse
         for row in rows_list
     ]
     try:
-        descriptions = generator.generate_column_descriptions_for_rows(row_tuples)
+        generation = generator.generate_column_descriptions_for_rows(row_tuples)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     out_headers = [f for f in fieldnames if f != "column_description"] + ["column_description"]
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=out_headers, extrasaction="ignore")
     writer.writeheader()
-    for row, col_desc in zip(rows_list, descriptions, strict=True):
+    for row, col_desc in zip(rows_list, generation.descriptions, strict=True):
         row["column_description"] = col_desc
         writer.writerow(row)
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=descriptions.csv"},
+        headers={
+            "Content-Disposition": "attachment; filename=descriptions.csv",
+            "X-LLM-Provider": generation.provider,
+            "X-LLM-Model": generation.model_version,
+            "X-LLM-Used": "true" if generation.used_llm else "false",
+        },
     )
 
 
@@ -224,17 +229,19 @@ def demo_ui() -> str:
     .status{margin-top:14px;font-weight:600}
     .status.ok{color:var(--ok)}
     .status.err{color:var(--err)}
-    pre{
-      background:#0f1720;
-      color:#dbffe7;
-      border-radius:12px;
+    .meta{
+      margin-top:12px;
+      font-size:14px;
+      color:var(--ink);
+      background:#edf7f6;
+      border:1px solid #cbe4df;
+      border-radius:10px;
       padding:10px;
-      min-height:120px;
-      max-height:280px;
-      overflow:auto;
-      font-size:12px;
-      margin-top:14px;
     }
+    .preview-wrap{margin-top:12px;overflow:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{border:1px solid #dce4e6;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f6f8f9}
     .hide{display:none}
   </style>
 </head>
@@ -249,17 +256,92 @@ def demo_ui() -> str:
       <a id="downloadLink" class="btn hide" download="descriptions.csv">Download CSV</a>
     </div>
     <div id="status" class="status"></div>
-    <pre id="output" class="hide"></pre>
+    <div id="llmInfo" class="meta hide"></div>
+    <div class="preview-wrap hide" id="previewWrap">
+      <table>
+        <thead id="previewHead"></thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
   </div>
   <script>
-    const output = document.getElementById("output");
     const statusEl = document.getElementById("status");
     const processBtn = document.getElementById("processBtn");
     const downloadLink = document.getElementById("downloadLink");
+    const llmInfo = document.getElementById("llmInfo");
+    const previewWrap = document.getElementById("previewWrap");
+    const previewHead = document.getElementById("previewHead");
+    const previewBody = document.getElementById("previewBody");
 
     function setStatus(text, type){
       statusEl.textContent = text;
       statusEl.className = "status " + (type || "");
+    }
+
+    function parseCsv(csvText){
+      const rows = [];
+      let row = [];
+      let cell = "";
+      let inQuotes = false;
+      for(let i = 0; i < csvText.length; i++){
+        const ch = csvText[i];
+        const next = csvText[i + 1];
+        if(ch === '"'){
+          if(inQuotes && next === '"'){
+            cell += '"';
+            i += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+          continue;
+        }
+        if(ch === "," && !inQuotes){
+          row.push(cell);
+          cell = "";
+          continue;
+        }
+        if((ch === "\\n" || ch === "\\r") && !inQuotes){
+          if(ch === "\\r" && next === "\\n"){ i += 1; }
+          row.push(cell);
+          cell = "";
+          if(row.length > 1 || (row.length === 1 && row[0] !== "")){
+            rows.push(row);
+          }
+          row = [];
+          continue;
+        }
+        cell += ch;
+      }
+      if(cell.length || row.length){
+        row.push(cell);
+        rows.push(row);
+      }
+      if(rows.length < 2){ return {headers: [], rows: []}; }
+      return {headers: rows[0], rows: rows.slice(1)};
+    }
+
+    function renderPreview(csvText){
+      const parsed = parseCsv(csvText);
+      previewHead.innerHTML = "";
+      previewBody.innerHTML = "";
+      if(!parsed.headers.length){ previewWrap.classList.add("hide"); return; }
+      const headRow = document.createElement("tr");
+      parsed.headers.forEach((h) => {
+        const th = document.createElement("th");
+        th.textContent = h;
+        headRow.appendChild(th);
+      });
+      previewHead.appendChild(headRow);
+      parsed.rows.slice(0, 12).forEach((r) => {
+        const tr = document.createElement("tr");
+        parsed.headers.forEach((_, i) => {
+          const td = document.createElement("td");
+          td.textContent = r[i] || "";
+          tr.appendChild(td);
+        });
+        previewBody.appendChild(tr);
+      });
+      previewWrap.classList.remove("hide");
     }
 
     async function runGenerateCsv(){
@@ -271,27 +353,31 @@ def demo_ui() -> str:
       processBtn.disabled = true;
       setStatus("Processing your file...", "");
       downloadLink.classList.add("hide");
-      output.classList.add("hide");
-      output.textContent = "";
+      llmInfo.classList.add("hide");
+      previewWrap.classList.add("hide");
       const form = new FormData();
       form.append("file", input.files[0]);
       const res = await fetch("/v1/descriptions/generate-csv", { method: "POST", body: form });
       const text = await res.text();
       if(!res.ok){
         setStatus("Processing failed. Please confirm CSV headers: table_name,column_name", "err");
-        output.classList.remove("hide");
+        llmInfo.classList.remove("hide");
         try {
           const err = JSON.parse(text);
-          output.textContent = String(err.detail || text);
+          llmInfo.textContent = String(err.detail || text);
         } catch(_) {
-          output.textContent = text;
+          llmInfo.textContent = text;
         }
         processBtn.disabled = false;
         return;
       }
+      const provider = res.headers.get("x-llm-provider") || "unknown";
+      const model = res.headers.get("x-llm-model") || "unknown";
+      const usedLlm = res.headers.get("x-llm-used") || "false";
       setStatus("Done. Your file is ready to download.", "ok");
-      output.classList.remove("hide");
-      output.textContent = text.split("\\n").slice(0, 8).join("\\n");
+      llmInfo.classList.remove("hide");
+      llmInfo.textContent = "Generator: " + provider + " | Model: " + model + " | LLM used: " + usedLlm;
+      renderPreview(text);
       const blob = new Blob([text], { type: "text/csv" });
       downloadLink.href = URL.createObjectURL(blob);
       downloadLink.classList.remove("hide");

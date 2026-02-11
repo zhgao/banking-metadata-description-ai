@@ -20,6 +20,9 @@ def test_generate_csv_adds_column_description() -> None:
     )
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/csv; charset=utf-8"
+    assert response.headers.get("x-llm-provider")
+    assert response.headers.get("x-llm-model")
+    assert response.headers.get("x-llm-used") in {"true", "false"}
     text = response.text
     assert "table_name" in text and "column_name" in text and "column_description" in text
     lines = text.strip().split("\n")

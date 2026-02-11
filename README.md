@@ -3,10 +3,14 @@
 FastAPI service that generates business descriptions for banking table/column metadata, validates quality/PII risk, and supports human review decisions.
 
 ## Features
-- **CSV flow (primary):** Input CSV with `table_name` and `column_name` → output same CSV with `column_description` added.
-  - `POST /v1/descriptions/generate-csv` — upload a CSV file; returns CSV with extra column `column_description`. **LLM-only** (requires `OPENAI_API_KEY`).
+- **CSV flow (primary):** Input CSV with `table_name` and `column_name` -> output same CSV with `column_description` added.
+  - `POST /v1/descriptions/generate-csv` - upload a CSV file; returns CSV with extra column `column_description`.
+  - Response headers include which generator ran:
+    - `X-LLM-Provider`
+    - `X-LLM-Model`
+    - `X-LLM-Used` (`true`/`false`)
 - `POST /v1/descriptions/generate` (JSON, optional)
-  - **LLM-only** generation for table + column descriptions (requires `OPENAI_API_KEY`).
+  - Generates table + column descriptions with LLM when available, otherwise falls back to rules.
 - `POST /v1/descriptions/validate`
   - Confidence threshold checks.
   - PII summary and risk level.
@@ -21,7 +25,7 @@ FastAPI service that generates business descriptions for banking table/column me
 - `GET /v1/demo/sample?name=customer_account`
   - Load a sample payload in one click.
 - `GET /`
-  - Browser demo UI for full workflow.
+  - Minimal browser UI: upload CSV -> process -> preview generated descriptions -> download CSV.
 
 ## Project Structure
 - `app/main.py` - FastAPI routes
@@ -53,7 +57,7 @@ Open demo UI:
 open http://127.0.0.1:8000/
 ```
 
-Upload a CSV with headers `table_name` and `column_name` (e.g. `data/sample_columns.csv`); click **Generate column descriptions**; download the result CSV with `column_description` added.
+Upload a CSV with headers `table_name` and `column_name` (e.g. `data/sample_columns.csv`), click **Process CSV**, then download the result CSV with `column_description` added.
 
 ## Example API Calls
 **CSV (add column descriptions):**
@@ -99,17 +103,21 @@ curl -X POST http://127.0.0.1:8000/v1/descriptions/validate \
   }'
 ```
 
-## Optional LLM refinement
-Set environment variables before starting the app to use the LLM for column descriptions (CSV and JSON flows):
+## LLM Configuration
+Set environment variables before starting the app:
 ```bash
 export OPENAI_API_KEY="your_key"
 export OPENAI_MODEL="gpt-4o-mini"
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+export OLLAMA_MODEL="qwen2.5:14b"
+export PREFER_LOCAL_LLM="true"
 ```
-When unset, the system falls back to deterministic rule-based generation.
+Generation order for CSV endpoint:
+1. Local Ollama model (default, if available)
+2. OpenAI model (if API key is set)
+3. Rule-based fallback
 
 ## Notes for Hackathon Demo
-- Use `Load Sample` in UI to prefill a banking dataset instantly.
 - Keep sample values masked.
-- Show auto-generation, then validation, then reviewer submit from the web UI.
-- Download the approved dictionary CSV from `/v1/dictionary/export.csv`.
-- Track acceptance/edit rates from `reviews.jsonl` and approved entries from `dictionary.jsonl`.
+- Use the page as a single flow: upload -> process -> download.
+- Show the model metadata displayed on the page after processing.

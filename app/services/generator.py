@@ -3,8 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+import httpx
+
 from app import models
-from app.config import MAX_SAMPLE_VALUES, OPENAI_API_KEY, OPENAI_MODEL
+from app.config import (
+    MAX_SAMPLE_VALUES,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+    PREFER_LOCAL_LLM,
+)
 from app.services.domain import BankingDomainKnowledge
 from app.services.name_parser import humanize_identifier, split_identifier
 
@@ -21,10 +30,20 @@ class GeneratorResult:
     model_version: str
 
 
+@dataclass
+class CSVGenerationResult:
+    descriptions: list[str]
+    model_version: str
+    provider: str
+    used_llm: bool
+
+
 class DescriptionGenerator:
     def __init__(self, knowledge: BankingDomainKnowledge) -> None:
         self.knowledge = knowledge
         self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY and OpenAI else None
+        self.ollama_base_url = OLLAMA_BASE_URL
+        self.ollama_model = OLLAMA_MODEL
 
     def generate(self, request: models.GenerateRequest) -> GeneratorResult:
         table_description = self._generate_table_description(request)
@@ -43,12 +62,33 @@ class DescriptionGenerator:
 
     def generate_column_descriptions_for_rows(
         self, rows: list[tuple[str, str]]
-    ) -> list[str]:
+    ) -> CSVGenerationResult:
         """Generate only column_description for each (table_name, column_name) pair."""
+        if PREFER_LOCAL_LLM:
+            ollama_descriptions = self._generate_column_descriptions_with_ollama(rows)
+            if ollama_descriptions is not None and len(ollama_descriptions) == len(rows):
+                return CSVGenerationResult(
+                    descriptions=ollama_descriptions,
+                    model_version=self.ollama_model,
+                    provider="ollama",
+                    used_llm=True,
+                )
+
         llm_descriptions = self._generate_column_descriptions_with_llm(rows) if self.client else None
         if llm_descriptions is not None and len(llm_descriptions) == len(rows):
-            return llm_descriptions
-        return [self._rule_column_description(table_name, column_name) for table_name, column_name in rows]
+            return CSVGenerationResult(
+                descriptions=llm_descriptions,
+                model_version=OPENAI_MODEL,
+                provider="openai",
+                used_llm=True,
+            )
+
+        return CSVGenerationResult(
+            descriptions=[self._rule_column_description(table_name, column_name) for table_name, column_name in rows],
+            model_version="rules-v1",
+            provider="rules",
+            used_llm=False,
+        )
 
     def _generate_column_descriptions_with_llm(
         self, rows: list[tuple[str, str]]
@@ -75,6 +115,51 @@ class DescriptionGenerator:
                 ],
                 temperature=0.1,
             )
+        except Exception:
+            return None
+
+    def _generate_column_descriptions_with_ollama(
+        self, rows: list[tuple[str, str]]
+    ) -> list[str] | None:
+        if not rows:
+            return None
+
+        payload = [
+            {"table_name": table_name, "column_name": column_name}
+            for table_name, column_name in rows
+        ]
+        system = (
+            "You are a banking data dictionary expert. "
+            "Return strict JSON only: {\"descriptions\": [..]}. "
+            "Provide one concise business-facing description per row in the same order."
+        )
+        prompt = json.dumps(payload)
+
+        try:
+            with httpx.Client(timeout=90) as client:
+                response = client.post(
+                    f"{self.ollama_base_url}/api/chat",
+                    json={
+                        "model": self.ollama_model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "stream": False,
+                        "options": {"temperature": 0.1},
+                    },
+                )
+            response.raise_for_status()
+            content = response.json().get("message", {}).get("content", "")
+        except Exception:
+            return None
+
+        try:
+            parsed = json.loads(content)
+            descriptions = parsed.get("descriptions")
+            if not isinstance(descriptions, list) or len(descriptions) != len(rows):
+                return None
+            return [str(d).strip() for d in descriptions]
         except Exception:
             return None
         content = completion.output_text
