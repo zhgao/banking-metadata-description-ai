@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from app import models
+from app.config import OLLAMA_MODEL, OPENAI_MODEL, PREFER_LOCAL_LLM
 from app.services.domain import BankingDomainKnowledge
 from app.services.generator import DescriptionGenerator
 from app.services.review import ReviewStore
@@ -159,7 +160,12 @@ def get_demo_sample(name: str | None = None) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def demo_ui() -> str:
-    return """
+    configured = (
+        f"Configured LLM: local Ollama (<code>{OLLAMA_MODEL}</code>) then OpenAI (<code>{OPENAI_MODEL}</code>) fallback"
+        if PREFER_LOCAL_LLM
+        else f"Configured LLM: OpenAI (<code>{OPENAI_MODEL}</code>) then local Ollama (<code>{OLLAMA_MODEL}</code>) fallback"
+    )
+    html = """
 <!doctype html>
 <html lang="en">
 <head>
@@ -250,13 +256,14 @@ def demo_ui() -> str:
     <h1>CSV Description Generator</h1>
     <p>Upload one CSV with headers <code>table_name</code> and <code>column_name</code>. The system will process it and produce a downloadable CSV with <code>column_description</code>.</p>
     <p class="tip">No other setup is required on this page.</p>
+    <div id="llmConfigured" class="meta">__CONFIGURED_LLM__</div>
     <input type="file" id="csvFile" accept=".csv" />
     <div class="actions">
       <button id="processBtn" onclick="runGenerateCsv()">Process CSV</button>
       <a id="downloadLink" class="btn hide" download="descriptions.csv">Download CSV</a>
     </div>
     <div id="status" class="status"></div>
-    <div id="llmInfo" class="meta hide"></div>
+    <div id="llmInfo" class="meta">Last run: not processed yet</div>
     <div class="preview-wrap hide" id="previewWrap">
       <table>
         <thead id="previewHead"></thead>
@@ -353,7 +360,6 @@ def demo_ui() -> str:
       processBtn.disabled = true;
       setStatus("Processing your file...", "");
       downloadLink.classList.add("hide");
-      llmInfo.classList.add("hide");
       previewWrap.classList.add("hide");
       const form = new FormData();
       form.append("file", input.files[0]);
@@ -361,7 +367,6 @@ def demo_ui() -> str:
       const text = await res.text();
       if(!res.ok){
         setStatus("Processing failed. Please confirm CSV headers: table_name,column_name", "err");
-        llmInfo.classList.remove("hide");
         try {
           const err = JSON.parse(text);
           llmInfo.textContent = String(err.detail || text);
@@ -375,7 +380,6 @@ def demo_ui() -> str:
       const model = res.headers.get("x-llm-model") || "unknown";
       const usedLlm = res.headers.get("x-llm-used") || "false";
       setStatus("Done. Your file is ready to download.", "ok");
-      llmInfo.classList.remove("hide");
       llmInfo.textContent = "Generator: " + provider + " | Model: " + model + " | LLM used: " + usedLlm;
       renderPreview(text);
       const blob = new Blob([text], { type: "text/csv" });
@@ -387,3 +391,4 @@ def demo_ui() -> str:
 </body>
 </html>
 """
+    return html.replace("__CONFIGURED_LLM__", configured)
