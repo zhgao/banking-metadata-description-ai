@@ -160,218 +160,142 @@ def demo_ui() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Banking Data Dictionary AI - Demo</title>
+  <title>Banking Data Dictionary AI</title>
   <style>
     :root{
-      --bg:#f5f4ef;
-      --ink:#19222b;
+      --bg:#f2f6f3;
+      --ink:#162028;
       --card:#ffffff;
-      --accent:#005d5d;
-      --muted:#5a6772;
-      --line:#d7d8d3;
+      --accent:#0f766e;
+      --muted:#506070;
+      --line:#d2d9dc;
+      --ok:#0d7a43;
+      --err:#b42318;
     }
     *{box-sizing:border-box}
     body{
       margin:0;
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      font-family:"Avenir Next","Segoe UI",sans-serif;
       color:var(--ink);
       background:
-        radial-gradient(circle at 15% 10%, #d7ece4 0%, transparent 30%),
-        radial-gradient(circle at 90% 80%, #f0dcc7 0%, transparent 35%),
+        radial-gradient(circle at 15% 10%, #d7efe7 0%, transparent 32%),
+        radial-gradient(circle at 85% 82%, #f3e8d2 0%, transparent 36%),
         var(--bg);
       min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
     }
-    .wrap{max-width:1080px;margin:24px auto;padding:16px}
-    h1{margin:0 0 4px;font-size:30px}
-    .sub{color:var(--muted);margin:0 0 18px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .card{
+      width:100%;
+      max-width:700px;
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:14px;
-      padding:14px;
-      box-shadow:0 8px 24px rgba(0,0,0,.05);
+      border-radius:18px;
+      padding:22px;
+      box-shadow:0 16px 38px rgba(11,19,26,.08);
     }
-    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
-    input,textarea{
+    h1{margin:0 0 6px;font-size:30px}
+    p{margin:0;color:var(--muted);line-height:1.5}
+    .tip{margin-top:8px;font-size:13px}
+    input[type=file]{
       width:100%;
-      border:1px solid #bcc4cc;
-      border-radius:10px;
-      padding:10px;
-      font-size:14px;
-      margin-bottom:10px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      margin-top:18px;
+      border:1px dashed #9ab4b0;
+      background:#f8fcfa;
+      border-radius:12px;
+      padding:14px;
     }
-    textarea{min-height:132px;resize:vertical}
     button,a.btn{
       background:var(--accent);
       color:#fff;
       border:none;
-      border-radius:10px;
-      padding:10px 14px;
+      border-radius:12px;
+      padding:11px 16px;
       font-weight:600;
       cursor:pointer;
       text-decoration:none;
       display:inline-block;
-      margin-right:8px;
-      margin-top:6px;
+      margin-top:14px;
     }
+    button[disabled]{opacity:.55;cursor:not-allowed}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .status{margin-top:14px;font-weight:600}
+    .status.ok{color:var(--ok)}
+    .status.err{color:var(--err)}
     pre{
       background:#0f1720;
-      color:#d4ffe0;
-      border-radius:10px;
+      color:#dbffe7;
+      border-radius:12px;
       padding:10px;
-      min-height:280px;
+      min-height:120px;
+      max-height:280px;
       overflow:auto;
       font-size:12px;
+      margin-top:14px;
     }
-    .full{grid-column:1 / -1}
-    @media (max-width:900px){.grid{grid-template-columns:1fr}}
+    .hide{display:none}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Banking Data Dictionary AI</h1>
-    <p class="sub">Upload CSV (table_name, column_name) → download CSV with column_description</p>
-    <div class="grid">
-      <div class="card">
-        <label>CSV input (must have headers: table_name, column_name)</label>
-        <input type="file" id="csvFile" accept=".csv" />
-        <button onclick="runGenerateCsv()">Generate column descriptions</button>
-        <span id="csvStatus"></span>
-      </div>
-      <div class="card">
-        <label>Output CSV (with column_description)</label>
-        <pre id="output"></pre>
-        <a id="downloadLink" class="btn" style="display:none" download="descriptions.csv">Download CSV</a>
-      </div>
-      <div class="card full">
-        <label>Optional: Generate Request JSON (legacy)</label>
-        <textarea id="generatePayload">{
-  "table_name": "customer_account",
-  "table_context": "Retail banking account master",
-  "columns": [
-    {
-      "column_name": "acct_open_dt",
-      "data_type": "date",
-      "nullable": false,
-      "constraints": ["not_null"],
-      "sample_values": ["2023-06-01", "2021-11-15"]
-    },
-    {
-      "column_name": "customer_email",
-      "data_type": "varchar(255)",
-      "nullable": true,
-      "constraints": [],
-      "sample_values": ["masked@example.com"]
-    }
-  ]
-}</textarea>
-        <label>Reviewer Email</label>
-        <input id="reviewer" value="judge@hackathon.dev" />
-        <label>Demo Sample Name</label>
-        <input id="sampleName" value="customer_account" />
-        <button onclick="loadSample()">Load Sample</button>
-        <button onclick="runGenerate()">Generate</button>
-        <button onclick="runValidate()">Validate</button>
-        <button onclick="submitReview()">Submit Review</button>
-        <a class="btn" href="/v1/dictionary/export.csv" target="_blank">Download CSV</a>
-      </div>
-      <div class="card full">
-        <label>Review Decisions JSON (approved/edited/rejected)</label>
-        <textarea id="reviewPayload">{
-  "decisions": [
-    {"column_name":"acct_open_dt","action":"approved"},
-    {"column_name":"customer_email","action":"edited","edited_description":"Customer email used for digital notifications and authentication workflows."}
-  ]
-}</textarea>
-      </div>
+  <div class="card">
+    <h1>CSV Description Generator</h1>
+    <p>Upload one CSV with headers <code>table_name</code> and <code>column_name</code>. The system will process it and produce a downloadable CSV with <code>column_description</code>.</p>
+    <p class="tip">No other setup is required on this page.</p>
+    <input type="file" id="csvFile" accept=".csv" />
+    <div class="actions">
+      <button id="processBtn" onclick="runGenerateCsv()">Process CSV</button>
+      <a id="downloadLink" class="btn hide" download="descriptions.csv">Download CSV</a>
     </div>
+    <div id="status" class="status"></div>
+    <pre id="output" class="hide"></pre>
   </div>
   <script>
-    let latestGenerated = null;
     const output = document.getElementById("output");
+    const statusEl = document.getElementById("status");
+    const processBtn = document.getElementById("processBtn");
+    const downloadLink = document.getElementById("downloadLink");
 
-    function show(obj){
-      output.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
-    }
-
-    async function loadSample(){
-      const name = encodeURIComponent(document.getElementById("sampleName").value.trim());
-      const query = name ? "?name=" + name : "";
-      const res = await fetch("/v1/demo/sample" + query);
-      const data = await res.json();
-      if(!res.ok){ show(data); return; }
-      document.getElementById("generatePayload").value = JSON.stringify(data, null, 2);
-      latestGenerated = null;
-      show({ message: "Sample loaded", sample: name || "default" });
+    function setStatus(text, type){
+      statusEl.textContent = text;
+      statusEl.className = "status " + (type || "");
     }
 
     async function runGenerateCsv(){
       const input = document.getElementById("csvFile");
-      const status = document.getElementById("csvStatus");
-      const link = document.getElementById("downloadLink");
-      if(!input.files || !input.files[0]){ status.textContent = "Select a CSV file."; return; }
-      status.textContent = "Generating…";
-      link.style.display = "none";
+      if(!input.files || !input.files[0]){
+        setStatus("Please select a CSV file first.", "err");
+        return;
+      }
+      processBtn.disabled = true;
+      setStatus("Processing your file...", "");
+      downloadLink.classList.add("hide");
+      output.classList.add("hide");
+      output.textContent = "";
       const form = new FormData();
       form.append("file", input.files[0]);
       const res = await fetch("/v1/descriptions/generate-csv", { method: "POST", body: form });
       const text = await res.text();
       if(!res.ok){
-        status.textContent = "";
-        try { const err = JSON.parse(text); show(err.detail || text); } catch(_) { show(text); }
+        setStatus("Processing failed. Please confirm CSV headers: table_name,column_name", "err");
+        output.classList.remove("hide");
+        try {
+          const err = JSON.parse(text);
+          output.textContent = String(err.detail || text);
+        } catch(_) {
+          output.textContent = text;
+        }
+        processBtn.disabled = false;
         return;
       }
-      status.textContent = "Done.";
-      show(text);
+      setStatus("Done. Your file is ready to download.", "ok");
+      output.classList.remove("hide");
+      output.textContent = text.split("\\n").slice(0, 8).join("\\n");
       const blob = new Blob([text], { type: "text/csv" });
-      link.href = URL.createObjectURL(blob);
-      link.style.display = "inline-block";
-    }
-
-    async function runGenerate(){
-      const body = JSON.parse(document.getElementById("generatePayload").value);
-      const res = await fetch("/v1/descriptions/generate", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      latestGenerated = data;
-      show(data);
-    }
-
-    async function runValidate(){
-      if(!latestGenerated){ show("Run Generate first."); return; }
-      const body = {
-        table_name: JSON.parse(document.getElementById("generatePayload").value).table_name,
-        generated_payload: latestGenerated
-      };
-      const res = await fetch("/v1/descriptions/validate", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(body)
-      });
-      show(await res.json());
-    }
-
-    async function submitReview(){
-      if(!latestGenerated){ show("Run Generate first."); return; }
-      const table = JSON.parse(document.getElementById("generatePayload").value).table_name;
-      const reviewDecisions = JSON.parse(document.getElementById("reviewPayload").value).decisions;
-      const body = {
-        table_name: table,
-        reviewer: document.getElementById("reviewer").value,
-        decisions: reviewDecisions,
-        generated_columns: latestGenerated.columns || []
-      };
-      const res = await fetch("/v1/reviews/submit", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(body)
-      });
-      show(await res.json());
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.classList.remove("hide");
+      processBtn.disabled = false;
     }
   </script>
 </body>
