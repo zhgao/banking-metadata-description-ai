@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+__pycache__/
+.idea/
+*.pyc
+
+# Local env config
+.env
+
+# Local runtime output
+reviews.jsonl
+dictionary.jsonl

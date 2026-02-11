@@ -1,0 +1,6 @@
+table_name,column_name
+customer_account,acct_open_dt
+customer_account,kyc_status_cd
+customer_account,customer_email
+transaction_ledger,txn_amt
+transaction_ledger,txn_dt

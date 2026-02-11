@@ -1,0 +1,64 @@
+[
+  {
+    "name": "customer_account",
+    "description": "Retail banking account master table",
+    "payload": {
+      "table_name": "customer_account",
+      "table_context": "Retail banking account master",
+      "columns": [
+        {
+          "column_name": "acct_open_dt",
+          "data_type": "date",
+          "nullable": false,
+          "constraints": ["not_null"],
+          "sample_values": ["2023-06-01", "2021-11-15"]
+        },
+        {
+          "column_name": "kyc_status_cd",
+          "data_type": "varchar(10)",
+          "nullable": false,
+          "constraints": ["check enum"],
+          "sample_values": ["VERIFIED", "PENDING"]
+        },
+        {
+          "column_name": "customer_email",
+          "data_type": "varchar(255)",
+          "nullable": true,
+          "constraints": [],
+          "sample_values": ["masked@example.com"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "loan_application",
+    "description": "Consumer loan application and underwriting",
+    "payload": {
+      "table_name": "loan_application",
+      "table_context": "Loan onboarding and underwriting decisions",
+      "columns": [
+        {
+          "column_name": "application_id",
+          "data_type": "varchar(36)",
+          "nullable": false,
+          "constraints": ["primary_key"],
+          "sample_values": ["APP-1001", "APP-1002"]
+        },
+        {
+          "column_name": "requested_amt",
+          "data_type": "decimal(14,2)",
+          "nullable": false,
+          "constraints": ["not_null"],
+          "sample_values": ["10000.00", "25000.00"]
+        },
+        {
+          "column_name": "apr_rate",
+          "data_type": "decimal(5,2)",
+          "nullable": true,
+          "constraints": [],
+          "sample_values": ["7.15", "9.25"]
+        }
+      ]
+    }
+  }
+]

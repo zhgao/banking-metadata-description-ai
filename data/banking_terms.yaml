@@ -1,0 +1,19 @@
+terms:
+  kyc: Know Your Customer compliance verification process.
+  aml: Anti-Money Laundering monitoring and controls.
+  iban: International Bank Account Number used in cross-border payments.
+  swift: SWIFT/BIC identifier for interbank message routing.
+  apr: Annual Percentage Rate used for lending products.
+  txn: Financial transaction event.
+
+pii_keywords:
+  - first_name
+  - last_name
+  - full_name
+  - ssn
+  - email
+  - phone
+  - dob
+  - address
+  - passport
+  - tax_id
