@@ -13,7 +13,7 @@ from app.services.review import ReviewStore
 from app.services.samples import DemoSamples
 from app.services.validator import DescriptionValidator
 
-app = FastAPI(title="Banking Metadata Description AI", version="1.0.0")
+app = FastAPI(title="Banking Data Dictionary AI", version="1.0.0")
 
 knowledge = BankingDomainKnowledge()
 generator = DescriptionGenerator(knowledge)
@@ -160,7 +160,7 @@ def demo_ui() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Banking Metadata Description AI - Demo</title>
+  <title>Banking Data Dictionary AI - Demo</title>
   <style>
     :root{
       --bg:#f5f4ef;
@@ -231,7 +231,7 @@ def demo_ui() -> str:
 </head>
 <body>
   <div class="wrap">
-    <h1>Banking Metadata Description AI</h1>
+    <h1>Banking Data Dictionary AI</h1>
     <p class="sub">Upload CSV (table_name, column_name) → download CSV with column_description</p>
     <div class="grid">
       <div class="card">

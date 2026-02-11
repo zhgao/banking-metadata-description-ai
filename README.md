@@ -1,4 +1,4 @@
-# Banking Metadata Description AI (Hackathon MVP)
+# Banking Data Dictionary AI (Hackathon MVP)
 
 FastAPI service that generates business descriptions for banking table/column metadata, validates quality/PII risk, and supports human review decisions.
 
