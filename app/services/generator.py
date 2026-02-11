@@ -27,28 +27,28 @@ class DescriptionGenerator:
         self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY and OpenAI else None
 
     def generate(self, request: models.GenerateRequest) -> GeneratorResult:
-        """LLM-only generation.
+        table_description = self._generate_table_description(request)
+        columns = [self._generate_column(request.table_name, c) for c in request.columns]
 
-        Requires OPENAI_API_KEY. This avoids any rule-based fallback to keep outputs consistent.
-        """
-        if not self.client:
-            raise RuntimeError("OPENAI_API_KEY is not set (LLM-only mode).")
-        generated = self._generate_with_llm(request)
-        if not generated:
-            raise RuntimeError("LLM generation failed.")
-        return generated
+        # Prefer LLM when available, but keep deterministic fallback for local/demo use.
+        generated = self._generate_with_llm(request) if self.client else None
+        if generated:
+            return generated
+
+        return GeneratorResult(
+            table_description=table_description,
+            columns=columns,
+            model_version="rules-v1",
+        )
 
     def generate_column_descriptions_for_rows(
         self, rows: list[tuple[str, str]]
     ) -> list[str]:
-        """Generate only column_description for each (table_name, column_name) pair.
-        LLM-only. No table description."""
-        if not self.client:
-            raise RuntimeError("OPENAI_API_KEY is not set (LLM-only mode).")
-        llm_descriptions = self._generate_column_descriptions_with_llm(rows)
-        if llm_descriptions is None or len(llm_descriptions) != len(rows):
-            raise RuntimeError("LLM generation failed.")
-        return llm_descriptions
+        """Generate only column_description for each (table_name, column_name) pair."""
+        llm_descriptions = self._generate_column_descriptions_with_llm(rows) if self.client else None
+        if llm_descriptions is not None and len(llm_descriptions) == len(rows):
+            return llm_descriptions
+        return [self._rule_column_description(table_name, column_name) for table_name, column_name in rows]
 
     def _generate_column_descriptions_with_llm(
         self, rows: list[tuple[str, str]]
@@ -66,14 +66,17 @@ class DescriptionGenerator:
             "Each string is a concise business-facing column description (1-2 sentences) for that column in that table. "
             "Use banking terminology and be consistent. Output only valid JSON, no markdown."
         )
-        completion = self.client.responses.create(
-            model=OPENAI_MODEL,
-            input=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload)},
-            ],
-            temperature=0.1,
-        )
+        try:
+            completion = self.client.responses.create(
+                model=OPENAI_MODEL,
+                input=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": json.dumps(payload)},
+                ],
+                temperature=0.1,
+            )
+        except Exception:
+            return None
         content = completion.output_text
         try:
             parsed = json.loads(content)
@@ -83,6 +86,9 @@ class DescriptionGenerator:
             return [str(d).strip() for d in descriptions]
         except Exception:
             return None
+
+    def _rule_column_description(self, table_name: str, column_name: str) -> str:
+        return f"{humanize_identifier(column_name).capitalize()} in `{table_name}`."
 
     def _generate_table_description(self, request: models.GenerateRequest) -> str:
         base = f"Stores {humanize_identifier(request.table_name)} attributes for banking operations"
@@ -182,21 +188,24 @@ class DescriptionGenerator:
             ],
         }
 
-        completion = self.client.responses.create(
-            model=OPENAI_MODEL,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a banking data dictionary expert. Return strict JSON with keys "
-                        "table_description and columns. Each column must include column_name, "
-                        "column_description, business_meaning, pii_flag, confidence."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt)},
-            ],
-            temperature=0.1,
-        )
+        try:
+            completion = self.client.responses.create(
+                model=OPENAI_MODEL,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a banking data dictionary expert. Return strict JSON with keys "
+                            "table_description and columns. Each column must include column_name, "
+                            "column_description, business_meaning, pii_flag, confidence."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt)},
+                ],
+                temperature=0.1,
+            )
+        except Exception:
+            return None
 
         content = completion.output_text
         try:
@@ -233,21 +242,24 @@ class DescriptionGenerator:
             ],
         }
 
-        completion = self.client.responses.create(
-            model=OPENAI_MODEL,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a banking data dictionary expert. Return strict JSON with keys "
-                        "table_description and columns. Each column must include column_name, "
-                        "column_description, business_meaning, pii_flag, confidence."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt)},
-            ],
-            temperature=0.1,
-        )
+        try:
+            completion = self.client.responses.create(
+                model=OPENAI_MODEL,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a banking data dictionary expert. Return strict JSON with keys "
+                            "table_description and columns. Each column must include column_name, "
+                            "column_description, business_meaning, pii_flag, confidence."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt)},
+                ],
+                temperature=0.1,
+            )
+        except Exception:
+            return None
 
         content = completion.output_text
         try:

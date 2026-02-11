@@ -5,11 +5,6 @@ from app.main import app
 
 client = TestClient(app)
 
-def _has_openai_key() -> bool:
-    import os
-
-    return bool(os.getenv("OPENAI_API_KEY", "").strip())
-
 
 def test_health() -> None:
     response = client.get("/health")
@@ -18,8 +13,6 @@ def test_health() -> None:
 
 
 def test_generate_csv_adds_column_description() -> None:
-    if not _has_openai_key():
-        return
     csv_content = "table_name,column_name\ncustomer_account,acct_open_dt\n"
     response = client.post(
         "/v1/descriptions/generate-csv",
@@ -36,8 +29,6 @@ def test_generate_csv_adds_column_description() -> None:
 
 
 def test_generate_validate_review_flow() -> None:
-    if not _has_openai_key():
-        return
     samples_res = client.get("/v1/demo/samples")
     assert samples_res.status_code == 200
     assert any(s["name"] == "customer_account" for s in samples_res.json())

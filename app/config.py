@@ -3,7 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    load_dotenv = None  # type: ignore[assignment]
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+if load_dotenv:
+    load_dotenv(BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
 REVIEWS_PATH = BASE_DIR / "reviews.jsonl"
 DICTIONARY_PATH = BASE_DIR / "dictionary.jsonl"
